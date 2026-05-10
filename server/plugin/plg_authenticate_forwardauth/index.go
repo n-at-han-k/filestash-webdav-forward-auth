@@ -1,8 +1,11 @@
 package plg_authenticate_forwardauth
 
 import (
+	"encoding/json"
+	"fmt"
 	"html"
 	"net/http"
+	"os"
 
 	. "github.com/mickael-kerjean/filestash/server/common"
 )
@@ -11,10 +14,62 @@ const (
 	defaultUsernameHeader = "Remote-User"
 	defaultEmailHeader    = "Remote-Email"
 	defaultPasswordHeader = "Remote-Token"
+	backendLabel          = "default"
 )
 
 func init() {
 	Hooks.Register.AuthenticationMiddleware("forwardauth", ForwardAuth{})
+	Hooks.Register.Onload(autoconfigure)
+}
+
+func autoconfigure() {
+	webdavURL := os.Getenv("WEBDAV_URL")
+	if webdavURL == "" {
+		return
+	}
+	usernameHeader := envOr("FORWARD_AUTH_USERNAME_HEADER", defaultUsernameHeader)
+	emailHeader := envOr("FORWARD_AUTH_EMAIL_HEADER", defaultEmailHeader)
+	passwordHeader := envOr("FORWARD_AUTH_PASSWORD_HEADER", defaultPasswordHeader)
+
+	Config.Get("middleware.identity_provider.type").Set("forwardauth")
+	idpParams, _ := json.Marshal(map[string]string{
+		"type":            "forwardauth",
+		"username_header": usernameHeader,
+		"email_header":    emailHeader,
+		"password_header": passwordHeader,
+	})
+	Config.Get("middleware.identity_provider.params").Set(string(idpParams))
+
+	webdavConn := map[string]string{
+		"type":     "webdav",
+		"url":      webdavURL,
+		"username": "{{ .user }}",
+		"password": "{{ .password }}",
+	}
+	if path := os.Getenv("WEBDAV_PATH"); path != "" {
+		webdavConn["path"] = path
+	}
+	mapping, _ := json.Marshal(map[string]map[string]string{backendLabel: webdavConn})
+	Config.Get("middleware.attribute_mapping.related_backend").Set(backendLabel)
+	Config.Get("middleware.attribute_mapping.params").Set(string(mapping))
+
+	Config.Conn = []map[string]any{
+		{"type": "webdav", "label": backendLabel},
+	}
+
+	if Config.Get("auth.admin").String() == "" {
+		Config.Get("auth.admin").Set("disabled-forwardauth")
+	}
+
+	Config.Save()
+	fmt.Fprintln(os.Stderr, "[forwardauth] autoconfigured webdav backend at", webdavURL)
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 type ForwardAuth struct{}
