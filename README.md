@@ -1,5 +1,59 @@
 ![screenshot](https://raw.githubusercontent.com/mickael-kerjean/filestash_images/master/.assets/photo.jpg)
 
+# This fork
+
+Zero-setup Filestash configured against a single WebDAV backend, intended to sit behind a
+forward-auth proxy (Authelia / oauth2-proxy / Traefik forward-auth). The proxy is the source
+of truth for identity: it injects three request headers — username, email, and a per-user API
+key (used as the WebDAV password) — and Filestash uses them as the WebDAV credentials. No
+admin-setup screen, no connection picker, no manual config; users land directly in the file
+browser scoped to their own WebDAV account.
+
+## Run
+
+```sh
+docker run -d --name filestash \
+  -e WEBDAV_URL=https://webdav.example.com/remote.php/webdav \
+  -p 8334:8334 \
+  ghcr.io/n-at-han-k/filestash-webdav-forward-auth:latest
+```
+
+Then point your forward-auth proxy at `http://filestash:8334` so it injects the headers below
+on every request.
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WEBDAV_URL` | yes | — | WebDAV endpoint Filestash connects to. Presence of this var is what activates the env-driven setup. |
+| `WEBDAV_PATH` | no | `/` | Initial path / chroot inside the WebDAV mount. |
+| `FORWARD_AUTH_USERNAME_HEADER` | no | `Remote-User` | Request header carrying the authenticated username. Sent as the WebDAV Basic Auth username. |
+| `FORWARD_AUTH_EMAIL_HEADER` | no | `Remote-Email` | Request header carrying the user's email. Stored on the session for audit/display. |
+| `FORWARD_AUTH_PASSWORD_HEADER` | no | `Remote-Token` | Request header carrying the per-user WebDAV API key. Sent as the WebDAV Basic Auth password. |
+| `ADMIN_PASSWORD` | no | unset | Filestash admin console password (upstream behavior). With it unset, `/admin/` is open — keep that path behind your forward-auth proxy. |
+
+If `WEBDAV_URL` is unset, Filestash falls back to stock upstream behavior (connection picker, admin setup screen).
+
+## How the auth flow works
+
+1. A request reaches Filestash with no Filestash session cookie.
+2. Filestash 307-redirects to its internal auth endpoint.
+3. The fork's `forwardauth` plugin reads the three configured headers off the request, fails closed if `username` or `password` is missing, and otherwise mints a session containing those values.
+4. The session is templated into the WebDAV connection params (`username` ← header user, `password` ← header API key) and a session cookie is set.
+5. Subsequent requests reuse the cookie and connect to WebDAV with that user's credentials. Each forward-auth user gets a distinct Filestash session and backend cache.
+
+## Build from source (NixOS)
+
+```sh
+direnv allow          # uses flake.nix to provide go, vips, libheif, libraw, brotli, ...
+make init && make build
+WEBDAV_URL=https://... ./dist/filestash
+```
+
+Note: upstream's image plugins hard-link some static archives (`libwebp.a`, `libjpeg.a`, ...) that NixOS doesn't ship by default; if `make build` fails at the link stage, use the Docker build path instead. The provided `docker/Dockerfile` builds from local sources.
+
+---
+
 # What is this?
 
 <p>

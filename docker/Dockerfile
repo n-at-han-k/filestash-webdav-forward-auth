@@ -1,14 +1,7 @@
-# STEP1: CLONE THE CODE
-FROM alpine/git as builder_prepare
-WORKDIR /home/
-ARG GIT_REPO=https://github.com/mickael-kerjean/filestash
-ARG GIT_BRANCH=master
-RUN git clone --depth 1 --single-branch --branch ${GIT_BRANCH} ${GIT_REPO}
-
-# STEP2: BUILD BACKEND
+# STEP1: BUILD BACKEND from local source
 FROM golang:1.26-trixie AS builder_backend
 WORKDIR /home/filestash/
-COPY --from=builder_prepare /home/filestash/ .
+COPY . .
 RUN apt-get update > /dev/null && \
     apt-get install -y curl make > /dev/null 2>&1 && \
     apt-get install -y libjpeg-dev libtiff-dev libpng-dev libwebp-dev libraw-dev libheif-dev libgif-dev libvips-dev > /dev/null 2>&1 && \
